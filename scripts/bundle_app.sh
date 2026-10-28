@@ -5,7 +5,10 @@ APP_NAME="UtilizationAnalyzer"
 BUNDLE_ID="com.riteshyejju.UtilizationAnalyzer"
 VERSION="${VERSION:-1.0.0}"
 OUT_DIR="dist"
+RELEASE_DIR="releases"
 APP_BUNDLE="${OUT_DIR}/${APP_NAME}.app"
+DMG_STAGING="${OUT_DIR}/dmg_staging"
+DMG_PATH="${RELEASE_DIR}/${APP_NAME}.dmg"
 
 echo "==> Building ${APP_NAME} (Release)..."
 swift build -c release
@@ -62,4 +65,13 @@ echo -n "APPL????" > "${APP_BUNDLE}/Contents/PkgInfo"
 echo "==> Ad-hoc signing ${APP_BUNDLE}..."
 codesign --force --deep --sign - "${APP_BUNDLE}"
 
-echo "==> Built ${APP_BUNDLE} successfully!"
+echo "==> Creating ${DMG_PATH}..."
+rm -rf "${DMG_STAGING}"
+mkdir -p "${DMG_STAGING}" "${RELEASE_DIR}"
+cp -R "${APP_BUNDLE}" "${DMG_STAGING}/${APP_NAME}.app"
+ln -s /Applications "${DMG_STAGING}/Applications"
+rm -f "${DMG_PATH}"
+hdiutil create -volname "${APP_NAME}" -srcfolder "${DMG_STAGING}" -ov -format UDZO "${DMG_PATH}" >/dev/null
+rm -rf "${DMG_STAGING}"
+
+echo "==> Built ${APP_BUNDLE} and ${DMG_PATH} successfully!"

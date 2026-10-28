@@ -479,7 +479,7 @@ private struct ExportTabView: View {
                     Text("Optional Context Notes for the LLM Report")
                         .font(.subheadline.weight(.semibold))
                     TextField(
-                        "e.g., I bought a MacBook Air M5 (16GB) and want to know if I should keep it or upgrade to 24GB RAM / MacBook Pro before my return window ends...",
+                        "e.g., Evaluating if this Mac configuration is sufficient for my daily workload or if I should upgrade RAM / CPU...",
                         text: $manager.userContextNotes
                     )
                     .textFieldStyle(.roundedBorder)

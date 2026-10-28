@@ -21,14 +21,13 @@ jobs:
           swift build
           .build/debug/UtilizationAnalyzer --self-test
 
-      - name: Package Release .app Bundle
+      - name: Package Release .app Bundle & DMG
         run: |
           chmod +x scripts/bundle_app.sh
           ./scripts/bundle_app.sh
-          cd dist && zip -r UtilizationAnalyzer-macOS.zip UtilizationAnalyzer.app
 
-      - name: Upload macOS App Bundle Artifact
+      - name: Upload macOS DMG Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UtilizationAnalyzer-macOS
-          path: dist/UtilizationAnalyzer-macOS.zip
+          name: UtilizationAnalyzer-DMG
+          path: releases/UtilizationAnalyzer.dmg

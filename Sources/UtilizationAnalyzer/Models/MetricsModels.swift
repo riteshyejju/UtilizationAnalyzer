@@ -286,7 +286,7 @@ public enum TimeRangeOption: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-// MARK: - Sufficiency Evaluation (MacBook Air M5 Sizing Analysis)
+// MARK: - Sufficiency Evaluation (macOS Hardware Sizing Analysis)
 
 public enum SufficiencyVerdictLevel: String, Codable, Sendable {
     case optimal = "Optimal Match"

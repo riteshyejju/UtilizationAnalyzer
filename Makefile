@@ -1,6 +1,6 @@
-.PHONY: all build test app run install clean
+.PHONY: all build test app dmg run install clean
 
-all: app
+all: dmg
 
 build:
 	swift build
@@ -12,6 +12,8 @@ test:
 app:
 	chmod +x scripts/bundle_app.sh
 	./scripts/bundle_app.sh
+
+dmg: app
 
 run: app
 	open dist/UtilizationAnalyzer.app

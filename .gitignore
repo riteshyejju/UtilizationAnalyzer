@@ -11,10 +11,9 @@ DerivedData/
 *.dSYM.zip
 *.dSYM
 
-# Built App Bundles & Archives
+# Built App Bundles & Scratch Archives
 dist/
 *.app/
-*.dmg
 *.zip
 
 # Local exports / scratch
