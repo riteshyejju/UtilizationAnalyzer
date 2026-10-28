@@ -286,6 +286,96 @@ public enum TimeRangeOption: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+// MARK: - Export Range (independent of the dashboard chart window)
+
+public enum ExportRangeMode: String, CaseIterable, Identifiable, Sendable {
+    case dashboard = "Same as Dashboard"
+    case lastN = "Last N…"
+    case custom = "Custom Dates"
+    case allTime = "All Stored Data"
+
+    public var id: String { rawValue }
+}
+
+public enum ExportRangeUnit: String, CaseIterable, Identifiable, Sendable {
+    case hours = "Hours"
+    case days = "Days"
+    case weeks = "Weeks"
+    case months = "Months"
+
+    public var id: String { rawValue }
+
+    var calendarComponent: Calendar.Component {
+        switch self {
+        case .hours: return .hour
+        case .days: return .day
+        case .weeks: return .weekOfYear
+        case .months: return .month
+        }
+    }
+
+    var fileTag: String {
+        switch self {
+        case .hours: return "h"
+        case .days: return "d"
+        case .weeks: return "w"
+        case .months: return "mo"
+        }
+    }
+}
+
+/// A resolved, concrete export interval.
+public struct ExportInterval: Sendable {
+    public let start: Date
+    public let end: Date
+    /// Human-readable label used in the report, e.g. "Last 3 Months" or "Oct 1, 2026 – Oct 27, 2026".
+    public let label: String
+    /// Short filename-safe tag, e.g. "3mo" or "2026-10-01_to_2026-10-27".
+    public let fileTag: String
+
+    public static func resolve(
+        mode: ExportRangeMode,
+        dashboardRange: TimeRangeOption,
+        lastNValue: Int,
+        lastNUnit: ExportRangeUnit,
+        customStart: Date,
+        customEnd: Date,
+        now: Date = Date()
+    ) -> ExportInterval {
+        let cal = Calendar.current
+        switch mode {
+        case .dashboard:
+            return ExportInterval(start: dashboardRange.startDate, end: now,
+                                  label: dashboardRange.title, fileTag: dashboardRange.rawValue)
+        case .allTime:
+            return ExportInterval(start: Date(timeIntervalSince1970: 0), end: now,
+                                  label: "All Stored Data", fileTag: "All")
+        case .lastN:
+            let n = max(1, lastNValue)
+            let start = cal.date(byAdding: lastNUnit.calendarComponent, value: -n, to: now) ?? now
+            let unitName = n == 1 ? String(lastNUnit.rawValue.dropLast()) : lastNUnit.rawValue
+            return ExportInterval(start: start, end: now,
+                                  label: "Last \(n) \(unitName)", fileTag: "\(n)\(lastNUnit.fileTag)")
+        case .custom:
+            // Whole-day semantics: start of the first day through end of the last day.
+            let lo = min(customStart, customEnd)
+            let hi = max(customStart, customEnd)
+            let start = cal.startOfDay(for: lo)
+            let endOfDay = cal.date(byAdding: DateComponents(day: 1, second: -1), to: cal.startOfDay(for: hi)) ?? hi
+            let display = DateFormatter()
+            display.dateStyle = .medium
+            display.timeStyle = .none
+            let tagFmt = DateFormatter()
+            tagFmt.dateFormat = "yyyy-MM-dd"
+            return ExportInterval(
+                start: start, end: endOfDay,
+                label: "\(display.string(from: start)) – \(display.string(from: endOfDay))",
+                fileTag: "\(tagFmt.string(from: start))_to_\(tagFmt.string(from: endOfDay))"
+            )
+        }
+    }
+}
+
 // MARK: - Sufficiency Evaluation (macOS Hardware Sizing Analysis)
 
 public enum SufficiencyVerdictLevel: String, Codable, Sendable {

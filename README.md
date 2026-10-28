@@ -31,7 +31,8 @@ curl -fsSL https://raw.githubusercontent.com/riteshyejju/UtilizationAnalyzer/mai
 - **Per-App Resource Grouping:** Automatically aggregates child helper processes (browser renderers, IDE language servers, GPU helpers) into their parent `.app` bundle for accurate per-app CPU, Memory, and Disk I/O tracking.
 - **Interactive Dashboard & Menu Bar Extra:** Real-time menu bar popover plus a full `Swift Charts` dashboard across *15m*, *1h*, *6h*, *24h*, *7d*, and *All Time* windows stored in local SQLite (`~/Library/Application Support/UtilizationAnalyzer/metrics.sqlite`).
 - **Hardware Sufficiency Scorecard (0–100):** Automated evaluation across Memory, CPU/Thermal, GPU, and Disk/IO headroom.
-- **Two-Option Data Export:**
+- **Two-Option Data Export (with Custom Date Ranges & Last N Months):**
+  - Choose any export window: **Last N Hours / Days / Weeks / Months** (e.g., *Last 3 Months*, *Last 6 Months*), **Custom Start & End Dates**, **Dashboard Window**, or **All Stored Data**.
   1. **LLM-Ready Markdown Summary:** Copy to clipboard or save `.md` with `mean` / `p50` / `p95` / `peak` stats, bottleneck indicators, top apps, and an embedded prompt for ChatGPT, Claude, or Gemini.
   2. **Raw Telemetry Data:** Export full time-series data as `.json` or `.csv`.
 

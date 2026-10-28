@@ -375,9 +375,126 @@ private struct OverviewTabView: View {
 private struct ExportTabView: View {
     @ObservedObject var manager: MonitoringManager
 
+    private static let dateTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+
+    private var exportRangeCard: some View {
+        let interval = manager.exportInterval
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Export Range", systemImage: "calendar")
+                    .font(.headline)
+                Spacer()
+                if manager.isExporting {
+                    ProgressView().controlSize(.small)
+                    Text("Exporting…").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            Picker("Range", selection: $manager.exportRangeMode) {
+                ForEach(ExportRangeMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            switch manager.exportRangeMode {
+            case .dashboard:
+                Text("Uses the dashboard's toolbar window: **\(manager.selectedTimeRange.title)**.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+            case .lastN:
+                HStack(spacing: 10) {
+                    Text("Last")
+                    TextField("N", value: $manager.exportLastNValue, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 60)
+                        .multilineTextAlignment(.trailing)
+                    Stepper("", value: $manager.exportLastNValue, in: 1...999)
+                        .labelsHidden()
+                    Picker("Unit", selection: $manager.exportLastNUnit) {
+                        ForEach(ExportRangeUnit.allCases) { unit in
+                            Text(unit.rawValue).tag(unit)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 110)
+
+                    Divider().frame(height: 18)
+
+                    // Quick presets
+                    ForEach([(24, ExportRangeUnit.hours, "24h"), (7, .days, "7d"), (30, .days, "30d"),
+                             (3, .months, "3mo"), (6, .months, "6mo")], id: \.2) { value, unit, title in
+                        Button(title) {
+                            manager.exportLastNValue = value
+                            manager.exportLastNUnit = unit
+                        }
+                        .controlSize(.small)
+                    }
+                }
+
+            case .custom:
+                HStack(spacing: 14) {
+                    DatePicker("From", selection: $manager.exportCustomStart,
+                               in: ...Date(), displayedComponents: .date)
+                    DatePicker("To", selection: $manager.exportCustomEnd,
+                               in: ...Date(), displayedComponents: .date)
+                    Text("(whole days, inclusive)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .fixedSize()
+
+            case .allTime:
+                Text("Exports everything currently stored in the local database.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Divider()
+
+            // Resolved interval summary + data availability warning
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .foregroundStyle(.blue)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("**\(interval.label)** — \(Self.dateTimeFormatter.string(from: max(interval.start, manager.oldestSampleDate ?? interval.start))) → \(Self.dateTimeFormatter.string(from: min(interval.end, Date())))")
+                        .font(.caption)
+                    Text("\(manager.exportPreviewSampleCount) samples in range")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if let oldest = manager.oldestSampleDate, interval.start < oldest, manager.exportRangeMode != .allTime {
+                        Text("⚠︎ Data is only available since \(Self.dateTimeFormatter.string(from: oldest)). The export will cover the recorded portion only.")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                    if manager.retentionDays > 0, interval.start < Date().addingTimeInterval(-Double(manager.retentionDays) * 86400) {
+                        Text("⚠︎ Retention is set to \(manager.retentionDays) days — increase it in Settings to keep data for longer ranges.")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                exportRangeCard
                 // Two Prominent Export Option Cards
                 HStack(alignment: .top, spacing: 16) {
                     // Option 1 Card: LLM-Ready Markdown Summary
@@ -396,7 +513,7 @@ private struct ExportTabView: View {
                                 .clipShape(Capsule())
                         }
 
-                        Text("Generates a structured hardware sizing report with mean/p50/p95/peak telemetry, memory pressure & swap stats, fanless thermal headroom, top applications, and an embedded prompt asking the LLM if your MacBook is sufficient.")
+                        Text("Generates a structured hardware sizing report with mean/p50/p95/peak telemetry, memory pressure & swap stats, fanless thermal headroom, top applications, and an embedded prompt asking the LLM if your Mac is sufficient.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
@@ -488,9 +605,15 @@ private struct ExportTabView: View {
                 // Live Markdown Preview
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Label("Live Preview: LLM-Ready Markdown Report (\(manager.selectedTimeRange.title))", systemImage: "doc.text.magnifyingglass")
+                        Label("Preview: LLM-Ready Markdown Report (\(manager.exportInterval.label))", systemImage: "doc.text.magnifyingglass")
                             .font(.headline)
                         Spacer()
+                        Button {
+                            manager.refreshExportPreview()
+                        } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
+                        .controlSize(.small)
                         Button {
                             manager.copyLLMMarkdownToClipboard()
                         } label: {
@@ -499,9 +622,8 @@ private struct ExportTabView: View {
                         .controlSize(.small)
                     }
 
-                    let markdownText = manager.generateCurrentLLMMarkdown()
                     ScrollView {
-                        Text(markdownText)
+                        Text(manager.exportPreviewMarkdown.isEmpty ? "Generating preview…" : manager.exportPreviewMarkdown)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -521,6 +643,7 @@ private struct ExportTabView: View {
             }
             .padding(20)
         }
+        .onAppear { manager.refreshExportPreview() }
     }
 }
 
@@ -554,8 +677,11 @@ private struct SettingsTabView: View {
                 Picker("Keep Historical Telemetry For", selection: $manager.retentionDays) {
                     Text("7 Days").tag(7)
                     Text("14 Days").tag(14)
-                    Text("30 Days (Recommended)").tag(30)
-                    Text("90 Days").tag(90)
+                    Text("30 Days").tag(30)
+                    Text("90 Days (Recommended)").tag(90)
+                    Text("180 Days").tag(180)
+                    Text("1 Year").tag(365)
+                    Text("Keep Forever").tag(0)
                 }
 
                 LabeledContent("Database Location") {

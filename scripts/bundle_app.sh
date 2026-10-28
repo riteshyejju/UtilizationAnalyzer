@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="UtilizationAnalyzer"
 BUNDLE_ID="com.riteshyejju.UtilizationAnalyzer"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.1.0}"
 OUT_DIR="dist"
 RELEASE_DIR="releases"
 APP_BUNDLE="${OUT_DIR}/${APP_NAME}.app"

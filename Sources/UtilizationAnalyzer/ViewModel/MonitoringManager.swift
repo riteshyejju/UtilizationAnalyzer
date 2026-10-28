@@ -26,6 +26,7 @@ public final class MonitoringManager: ObservableObject {
     @Published public var selectedTimeRange: TimeRangeOption = .last1h {
         didSet {
             refreshHistoricalData()
+            if exportRangeMode == .dashboard { refreshExportPreview() }
         }
     }
 
@@ -70,6 +71,19 @@ public final class MonitoringManager: ObservableObject {
     @Published public var launchAtLogin: Bool = false
     @Published public var statusToast: String?
 
+    // Export range settings (independent of the dashboard chart window)
+    @Published public var exportRangeMode: ExportRangeMode = .lastN { didSet { saveExportSettings() } }
+    @Published public var exportLastNValue: Int = 7 { didSet { saveExportSettings() } }
+    @Published public var exportLastNUnit: ExportRangeUnit = .days { didSet { saveExportSettings() } }
+    @Published public var exportCustomStart: Date = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date() {
+        didSet { refreshExportPreview() }
+    }
+    @Published public var exportCustomEnd: Date = Date() { didSet { refreshExportPreview() } }
+    @Published public private(set) var isExporting: Bool = false
+    @Published public private(set) var exportPreviewMarkdown: String = ""
+    @Published public private(set) var exportPreviewSampleCount: Int = 0
+    @Published public private(set) var oldestSampleDate: Date?
+
     public init(database: MetricsDatabase = MetricsDatabase()) {
         let hw = HardwareProfile.current()
         self.hardware = hw
@@ -81,8 +95,12 @@ public final class MonitoringManager: ObservableObject {
         let savedInterval = UserDefaults.standard.double(forKey: "samplingIntervalSeconds")
         self.samplingIntervalSeconds = savedInterval >= 2.0 ? savedInterval : 5.0
 
-        let savedRetention = UserDefaults.standard.integer(forKey: "retentionDays")
-        self.retentionDays = savedRetention > 0 ? savedRetention : 30
+        // 0 = keep forever; default 90 days so "last N months" exports have data to work with
+        if UserDefaults.standard.object(forKey: "retentionDays") != nil {
+            self.retentionDays = max(0, UserDefaults.standard.integer(forKey: "retentionDays"))
+        } else {
+            self.retentionDays = 90
+        }
 
         if UserDefaults.standard.object(forKey: "showLiveStatsInMenuBar") != nil {
             self.showLiveStatsInMenuBar = UserDefaults.standard.bool(forKey: "showLiveStatsInMenuBar")
@@ -92,6 +110,17 @@ public final class MonitoringManager: ObservableObject {
 
         self.userContextNotes = UserDefaults.standard.string(forKey: "userContextNotes") ?? ""
         self.launchAtLogin = (SMAppService.mainApp.status == .enabled)
+
+        let d = UserDefaults.standard
+        if let raw = d.string(forKey: "exportRangeMode"), let mode = ExportRangeMode(rawValue: raw) {
+            self.exportRangeMode = mode
+        }
+        if d.object(forKey: "exportLastNValue") != nil {
+            self.exportLastNValue = max(1, d.integer(forKey: "exportLastNValue"))
+        }
+        if let raw = d.string(forKey: "exportLastNUnit"), let unit = ExportRangeUnit(rawValue: raw) {
+            self.exportLastNUnit = unit
+        }
 
         database.pruneOldSamples(olderThanDays: self.retentionDays)
         refreshHistoricalData()
@@ -184,67 +213,115 @@ public final class MonitoringManager: ObservableObject {
         }
     }
 
-    // MARK: - Export Actions (Option 1: LLM Markdown | Option 2: Raw Data)
+    // MARK: - Export Range
 
-    public func generateCurrentLLMMarkdown() -> String {
-        let allRangeSamples = database.fetchSystemSamples(since: selectedTimeRange.startDate, maxPoints: 0)
-        let eval = SufficiencyAnalyzer.evaluate(hardware: hardware, samples: allRangeSamples, topApps: aggregatedApps)
-        return DataExporter.generateLLMMarkdownReport(
-            hardware: hardware,
-            timeRange: selectedTimeRange,
-            samples: allRangeSamples,
-            topApps: aggregatedApps,
-            evaluation: eval,
-            userNotes: userContextNotes
+    /// The concrete interval the next export will cover.
+    public var exportInterval: ExportInterval {
+        ExportInterval.resolve(
+            mode: exportRangeMode,
+            dashboardRange: selectedTimeRange,
+            lastNValue: exportLastNValue,
+            lastNUnit: exportLastNUnit,
+            customStart: exportCustomStart,
+            customEnd: exportCustomEnd
         )
     }
 
-    public func copyLLMMarkdownToClipboard() {
-        let md = generateCurrentLLMMarkdown()
-        DataExporter.copyToClipboard(md)
-        showToast("Copied LLM-Ready Markdown Report to Clipboard!")
+    private func saveExportSettings() {
+        let d = UserDefaults.standard
+        d.set(exportRangeMode.rawValue, forKey: "exportRangeMode")
+        d.set(exportLastNValue, forKey: "exportLastNValue")
+        d.set(exportLastNUnit.rawValue, forKey: "exportLastNUnit")
+        refreshExportPreview()
     }
 
-    public func saveLLMMarkdownToFile() {
-        let md = generateCurrentLLMMarkdown()
-        guard let data = md.data(using: .utf8) else { return }
-        let filename = "MacBook-Sufficiency-LLM-Report-\(selectedTimeRange.rawValue).md"
-        DataExporter.saveFileInteractively(defaultFilename: filename, content: data) { [weak self] url in
-            if let url {
-                self?.showToast("Saved LLM Report to \(url.lastPathComponent)")
+    // MARK: - Export Actions (Option 1: LLM Markdown | Option 2: Raw Data)
+
+    private enum ExportKind { case markdown, json, csv }
+
+    /// Builds export content on the background queue so large ranges don't freeze the UI.
+    private func buildExport(_ kind: ExportKind, interval: ExportInterval) async -> (data: Data, sampleCount: Int)? {
+        let hw = hardware
+        let db = database
+        let notes = userContextNotes
+        return await withCheckedContinuation { continuation in
+            collectorQueue.async {
+                let samples = db.fetchSystemSamples(since: interval.start, until: interval.end, maxPoints: 0)
+                let apps = db.fetchAggregatedApps(since: interval.start, until: interval.end, limit: 40)
+                let eval = SufficiencyAnalyzer.evaluate(hardware: hw, samples: samples, topApps: apps)
+                var data: Data?
+                switch kind {
+                case .markdown:
+                    data = DataExporter.generateLLMMarkdownReport(
+                        hardware: hw, rangeLabel: interval.label, samples: samples,
+                        topApps: apps, evaluation: eval, userNotes: notes
+                    ).data(using: .utf8)
+                case .json:
+                    data = DataExporter.generateRawJSON(
+                        hardware: hw, rangeLabel: interval.label, samples: samples,
+                        topApps: apps, evaluation: eval
+                    )
+                case .csv:
+                    data = DataExporter.generateRawCSV(samples: samples).data(using: .utf8)
+                }
+                continuation.resume(returning: data.map { ($0, samples.count) })
             }
         }
     }
 
-    public func exportRawJSONToFile() {
-        let rawSamples = database.fetchSystemSamples(since: selectedTimeRange.startDate, maxPoints: 0)
-        let eval = SufficiencyAnalyzer.evaluate(hardware: hardware, samples: rawSamples, topApps: aggregatedApps)
-        guard let data = DataExporter.generateRawJSON(
-            hardware: hardware,
-            timeRange: selectedTimeRange,
-            samples: rawSamples,
-            topApps: aggregatedApps,
-            evaluation: eval
-        ) else { return }
-
-        let filename = "UtilizationAnalyzer-RawData-\(selectedTimeRange.rawValue).json"
-        DataExporter.saveFileInteractively(defaultFilename: filename, content: data) { [weak self] url in
-            if let url {
-                self?.showToast("Saved Raw JSON to \(url.lastPathComponent)")
+    private func runExport(_ kind: ExportKind, toClipboard: Bool = false) {
+        guard !isExporting else { return }
+        let interval = exportInterval
+        isExporting = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.isExporting = false }
+            guard let result = await self.buildExport(kind, interval: interval) else {
+                self.showToast("Export failed.")
+                return
+            }
+            if result.sampleCount == 0 {
+                self.showToast("No data recorded in \(interval.label) — exporting an empty report.")
+            }
+            if toClipboard, let text = String(data: result.data, encoding: .utf8) {
+                DataExporter.copyToClipboard(text)
+                self.showToast("Copied LLM report (\(interval.label)) to clipboard!")
+                return
+            }
+            let ext: String
+            let prefix: String
+            switch kind {
+            case .markdown: ext = "md"; prefix = "Mac-Sufficiency-LLM-Report"
+            case .json: ext = "json"; prefix = "UtilizationAnalyzer-RawData"
+            case .csv: ext = "csv"; prefix = "UtilizationAnalyzer-RawData"
+            }
+            DataExporter.saveFileInteractively(
+                defaultFilename: "\(prefix)-\(interval.fileTag).\(ext)",
+                content: result.data
+            ) { [weak self] url in
+                if let url {
+                    self?.showToast("Saved \(url.lastPathComponent) (\(result.sampleCount) samples)")
+                }
             }
         }
     }
 
-    public func exportRawCSVToFile() {
-        let rawSamples = database.fetchSystemSamples(since: selectedTimeRange.startDate, maxPoints: 0)
-        let csv = DataExporter.generateRawCSV(samples: rawSamples)
-        guard let data = csv.data(using: .utf8) else { return }
+    public func copyLLMMarkdownToClipboard() { runExport(.markdown, toClipboard: true) }
+    public func saveLLMMarkdownToFile() { runExport(.markdown) }
+    public func exportRawJSONToFile() { runExport(.json) }
+    public func exportRawCSVToFile() { runExport(.csv) }
 
-        let filename = "UtilizationAnalyzer-RawData-\(selectedTimeRange.rawValue).csv"
-        DataExporter.saveFileInteractively(defaultFilename: filename, content: data) { [weak self] url in
-            if let url {
-                self?.showToast("Saved Raw CSV to \(url.lastPathComponent)")
+    /// Regenerates the Markdown preview for the current export range in the background.
+    public func refreshExportPreview() {
+        let interval = exportInterval
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let result = await self.buildExport(.markdown, interval: interval),
+               let text = String(data: result.data, encoding: .utf8) {
+                self.exportPreviewMarkdown = text
+                self.exportPreviewSampleCount = result.sampleCount
             }
+            self.oldestSampleDate = self.database.oldestSampleDate()
         }
     }
 

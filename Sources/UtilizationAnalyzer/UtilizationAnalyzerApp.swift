@@ -67,7 +67,7 @@ public enum SelfTestRunner {
 
         // 1. Hardware Profile
         let hw = HardwareProfile.current()
-        print("[1/6] Hardware Profile: \(hw.formattedSummary)")
+        print("[1/7] Hardware Profile: \(hw.formattedSummary)")
         guard hw.physicalMemoryBytes > 0 && hw.totalCores > 0 else {
             print("FAIL: Invalid hardware profile")
             return false
@@ -84,7 +84,7 @@ public enum SelfTestRunner {
         let apps2 = procCollector.collectTopApps(limit: 15)
 
         print(String(
-            format: "[2/6] System Sample: CPU=%.1f%% (PeakCore=%.1f%%), MemUsed=%@ (Comp=%@, Swap=%@, Pressure=%@), GPU=%.1f%%, Thermal=%@, Power=%.1fW",
+            format: "[2/7] System Sample: CPU=%.1f%% (PeakCore=%.1f%%), MemUsed=%@ (Comp=%@, Swap=%@, Pressure=%@), GPU=%.1f%%, Thermal=%@, Power=%.1fW",
             sample2.cpuTotalPercent,
             sample2.peakCorePercent,
             ByteFormatter.formatBytes(sample2.memoryUsedBytes),
@@ -100,7 +100,7 @@ public enum SelfTestRunner {
             return false
         }
 
-        print("[3/6] Process Collector: Captured \(apps2.count) grouped applications.")
+        print("[3/7] Process Collector: Captured \(apps2.count) grouped applications.")
         if let firstApp = apps2.first {
             print("      Top App: \(firstApp.displayName) (Procs=\(firstApp.processCount), CPU=\(String(format: "%.1f%%", firstApp.cpuPercent)), RAM=\(ByteFormatter.formatBytes(firstApp.memoryBytes)))")
         }
@@ -119,7 +119,7 @@ public enum SelfTestRunner {
 
         let fetchedSamples = db.fetchSystemSamples(since: Date().addingTimeInterval(-60), maxPoints: 100)
         let fetchedApps = db.fetchAggregatedApps(since: Date().addingTimeInterval(-60), limit: 15)
-        print("[4/6] SQLite Persistence: Stored & queried \(fetchedSamples.count) system samples and \(fetchedApps.count) aggregated apps.")
+        print("[4/7] SQLite Persistence: Stored & queried \(fetchedSamples.count) system samples and \(fetchedApps.count) aggregated apps.")
         guard fetchedSamples.count == 2 else {
             print("FAIL: Expected 2 system samples in DB, got \(fetchedSamples.count)")
             return false
@@ -131,7 +131,7 @@ public enum SelfTestRunner {
             samples: fetchedSamples,
             topApps: fetchedApps
         )
-        print("[5/6] Sufficiency Evaluation: Overall=\(evaluation.overallScore)/100 (\(evaluation.verdictLevel.rawValue)) | Mem=\(evaluation.memoryScore) | CPU/Therm=\(evaluation.cpuThermalScore) | GPU=\(evaluation.gpuScore)")
+        print("[5/7] Sufficiency Evaluation: Overall=\(evaluation.overallScore)/100 (\(evaluation.verdictLevel.rawValue)) | Mem=\(evaluation.memoryScore) | CPU/Therm=\(evaluation.cpuThermalScore) | GPU=\(evaluation.gpuScore)")
         guard (0...100).contains(evaluation.overallScore) else {
             print("FAIL: Invalid sufficiency score")
             return false
@@ -140,7 +140,7 @@ public enum SelfTestRunner {
         // 5. Exporters (Option 1: LLM Markdown | Option 2: Raw JSON & CSV)
         let markdown = DataExporter.generateLLMMarkdownReport(
             hardware: hw,
-            timeRange: .last1h,
+            rangeLabel: "Last 1 Hour",
             samples: fetchedSamples,
             topApps: fetchedApps,
             evaluation: evaluation,
@@ -148,7 +148,7 @@ public enum SelfTestRunner {
         )
         let jsonData = DataExporter.generateRawJSON(
             hardware: hw,
-            timeRange: .last1h,
+            rangeLabel: "Last 1 Hour",
             samples: fetchedSamples,
             topApps: fetchedApps,
             evaluation: evaluation
@@ -161,7 +161,48 @@ public enum SelfTestRunner {
             print("FAIL: Export validation failed")
             return false
         }
-        print("[6/6] Exporters Verified: Markdown (\(markdown.count) chars), JSON (\(jsonData.count) bytes), CSV (\(csvString.count) chars).")
+        print("[6/7] Exporters Verified: Markdown (\(markdown.count) chars), JSON (\(jsonData.count) bytes), CSV (\(csvString.count) chars).")
+        // 6. Export range resolution & bounded queries
+        let cal = Calendar.current
+        let now = Date()
+        let threeMonths = ExportInterval.resolve(
+            mode: .lastN, dashboardRange: .last1h, lastNValue: 3, lastNUnit: .months,
+            customStart: now, customEnd: now, now: now
+        )
+        let expectedStart = cal.date(byAdding: .month, value: -3, to: now)!
+        guard abs(threeMonths.start.timeIntervalSince(expectedStart)) < 1,
+              threeMonths.label == "Last 3 Months", threeMonths.fileTag == "3mo" else {
+            print("FAIL: Last-N-months resolution incorrect (\(threeMonths.label), \(threeMonths.fileTag))")
+            return false
+        }
+        let oneDay = ExportInterval.resolve(
+            mode: .lastN, dashboardRange: .last1h, lastNValue: 1, lastNUnit: .days,
+            customStart: now, customEnd: now, now: now
+        )
+        guard oneDay.label == "Last 1 Day" else {
+            print("FAIL: Singular unit label incorrect (\(oneDay.label))")
+            return false
+        }
+        // Custom range given in reverse order should be normalized to whole days
+        let tenDaysAgo = cal.date(byAdding: .day, value: -10, to: now)!
+        let custom = ExportInterval.resolve(
+            mode: .custom, dashboardRange: .last1h, lastNValue: 1, lastNUnit: .days,
+            customStart: now, customEnd: tenDaysAgo, now: now
+        )
+        guard custom.start == cal.startOfDay(for: tenDaysAgo),
+              custom.end > now, custom.end < cal.startOfDay(for: now).addingTimeInterval(86400),
+              custom.fileTag.contains("_to_") else {
+            print("FAIL: Custom range normalization incorrect")
+            return false
+        }
+        // `until` bound must exclude samples after the end date
+        let bounded = db.fetchSystemSamples(since: .distantPast, until: Date().addingTimeInterval(-3600), maxPoints: 0)
+        guard bounded.isEmpty, db.oldestSampleDate() != nil else {
+            print("FAIL: Bounded query returned \(bounded.count) samples, expected 0")
+            return false
+        }
+        print("[7/7] Export Ranges Verified: '\(threeMonths.label)', '\(oneDay.label)', '\(custom.label)'; bounded queries OK.")
+
         print("=== ALL SELF-TESTS PASSED ===")
         return true
     }
@@ -184,7 +225,7 @@ public enum SelfTestRunner {
         let eval = SufficiencyAnalyzer.evaluate(hardware: hw, samples: samples, topApps: apps)
         let report = DataExporter.generateLLMMarkdownReport(
             hardware: hw,
-            timeRange: .last24h,
+            rangeLabel: "Last 24 Hours",
             samples: samples,
             topApps: apps,
             evaluation: eval

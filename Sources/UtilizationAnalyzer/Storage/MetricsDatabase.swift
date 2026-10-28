@@ -221,7 +221,7 @@ public final class MetricsDatabase: @unchecked Sendable {
 
     // MARK: - Query System Samples
 
-    public func fetchSystemSamples(since startDate: Date, maxPoints: Int = 500) -> [SystemSample] {
+    public func fetchSystemSamples(since startDate: Date, until endDate: Date = .distantFuture, maxPoints: Int = 500) -> [SystemSample] {
         queue.sync {
             guard let db else { return [] }
             let sql = """
@@ -235,7 +235,7 @@ public final class MetricsDatabase: @unchecked Sendable {
                 net_rx_bps, net_tx_bps,
                 battery_pct, is_charging, is_ac_power, power_watts
             FROM system_samples
-            WHERE timestamp >= ?
+            WHERE timestamp >= ? AND timestamp <= ?
             ORDER BY timestamp ASC;
             """
 
@@ -244,6 +244,7 @@ public final class MetricsDatabase: @unchecked Sendable {
             defer { sqlite3_finalize(stmt) }
 
             sqlite3_bind_double(stmt, 1, startDate.timeIntervalSince1970)
+            sqlite3_bind_double(stmt, 2, endDate.timeIntervalSince1970)
 
             var allSamples: [SystemSample] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -315,7 +316,7 @@ public final class MetricsDatabase: @unchecked Sendable {
 
     // MARK: - Query Aggregated App Usage
 
-    public func fetchAggregatedApps(since startDate: Date, limit: Int = 50) -> [AggregatedAppUsage] {
+    public func fetchAggregatedApps(since startDate: Date, until endDate: Date = .distantFuture, limit: Int = 50) -> [AggregatedAppUsage] {
         queue.sync {
             guard let db else { return [] }
             let sql = """
@@ -332,7 +333,7 @@ public final class MetricsDatabase: @unchecked Sendable {
                 AVG(disk_read_bps) as avg_read,
                 AVG(disk_write_bps) as avg_write
             FROM app_samples
-            WHERE timestamp >= ?
+            WHERE timestamp >= ? AND timestamp <= ?
             GROUP BY app_id
             ORDER BY (AVG(cpu_percent) * 2.0 + (AVG(memory_bytes) / 100000000.0)) DESC
             LIMIT ?;
@@ -343,7 +344,8 @@ public final class MetricsDatabase: @unchecked Sendable {
             defer { sqlite3_finalize(stmt) }
 
             sqlite3_bind_double(stmt, 1, startDate.timeIntervalSince1970)
-            sqlite3_bind_int(stmt, 2, Int32(limit))
+            sqlite3_bind_double(stmt, 2, endDate.timeIntervalSince1970)
+            sqlite3_bind_int(stmt, 3, Int32(limit))
 
             var results: [AggregatedAppUsage] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -381,7 +383,9 @@ public final class MetricsDatabase: @unchecked Sendable {
 
     // MARK: - Maintenance & Stats
 
+    /// Deletes samples older than `days`. A value of 0 or less means "keep forever" (no pruning).
     public func pruneOldSamples(olderThanDays days: Int) {
+        guard days > 0 else { return }
         let cutoff = Date().addingTimeInterval(-Double(days) * 86400.0).timeIntervalSince1970
         queue.async { [weak self] in
             guard let self, let db = self.db else { return }
@@ -399,6 +403,21 @@ public final class MetricsDatabase: @unchecked Sendable {
             execSQL("DELETE FROM app_samples;")
             execSQL("DELETE FROM system_samples;")
             execSQL("VACUUM;")
+        }
+    }
+
+    public func oldestSampleDate() -> Date? {
+        queue.sync {
+            guard let db else { return nil }
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT MIN(timestamp) FROM system_samples;", -1, &stmt, nil) == SQLITE_OK else {
+                return nil
+            }
+            defer { sqlite3_finalize(stmt) }
+            if sqlite3_step(stmt) == SQLITE_ROW, sqlite3_column_type(stmt, 0) != SQLITE_NULL {
+                return Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
+            }
+            return nil
         }
     }
 

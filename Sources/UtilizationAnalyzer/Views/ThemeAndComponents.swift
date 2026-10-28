@@ -198,6 +198,10 @@ public struct ExportMenuButton: View {
     @ObservedObject public var manager: MonitoringManager
     public var compact: Bool = false
 
+    private static let quickPresets: [(Int, ExportRangeUnit)] = [
+        (24, .hours), (7, .days), (30, .days), (3, .months), (6, .months), (12, .months)
+    ]
+
     public init(manager: MonitoringManager, compact: Bool = false) {
         self.manager = manager
         self.compact = compact
@@ -205,6 +209,25 @@ public struct ExportMenuButton: View {
 
     public var body: some View {
         Menu {
+            Section("Range: \(manager.exportInterval.label)") {
+                Menu("Change Export Range") {
+                    Button("Same as Dashboard (\(manager.selectedTimeRange.title))") {
+                        manager.exportRangeMode = .dashboard
+                    }
+                    Divider()
+                    ForEach(Array(Self.quickPresets.enumerated()), id: \.offset) { _, preset in
+                        Button("Last \(preset.0) \(preset.1.rawValue)") {
+                            manager.exportLastNValue = preset.0
+                            manager.exportLastNUnit = preset.1
+                            manager.exportRangeMode = .lastN
+                        }
+                    }
+                    Divider()
+                    Button("All Stored Data") { manager.exportRangeMode = .allTime }
+                    Text("Custom dates: Dashboard → LLM & Raw Export")
+                }
+            }
+
             Section("Option 1: LLM-Ready Markdown Summary") {
                 Button {
                     manager.copyLLMMarkdownToClipboard()

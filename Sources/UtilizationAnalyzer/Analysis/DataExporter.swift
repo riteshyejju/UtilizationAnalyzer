@@ -16,7 +16,7 @@ public enum DataExporter {
 
     public static func generateLLMMarkdownReport(
         hardware: HardwareProfile,
-        timeRange: TimeRangeOption,
+        rangeLabel: String,
         samples: [SystemSample],
         topApps: [AggregatedAppUsage],
         evaluation: SufficiencyEvaluation,
@@ -82,7 +82,7 @@ public enum DataExporter {
         md.append("- **Unified Memory (RAM):** \(Int(round(hardware.physicalMemoryGB))) GB (\(ByteFormatter.formatBytes(hardware.physicalMemoryBytes)))")
         md.append("- **CPU Cores:** \(hardware.totalCores) Total (\(hardware.performanceCores) Performance + \(hardware.efficiencyCores) Efficiency)")
         md.append("- **macOS Version:** \(hardware.osVersion)")
-        md.append("- **Time Window:** \(timeRange.title) (`\(firstDate)` to `\(lastDate)`)")
+        md.append("- **Time Window:** \(rangeLabel) (`\(firstDate)` to `\(lastDate)`)")
         md.append("- **Monitored Duration:** \(ByteFormatter.formatDuration(evaluation.durationSeconds)) (\(evaluation.sampleCount) samples)")
         if latestDiskTotal > 0 {
             md.append(String(format: "- **Internal SSD Usage:** %@ / %@ (%.1f%% used)",
@@ -164,14 +164,14 @@ public enum DataExporter {
 
     public static func generateRawJSON(
         hardware: HardwareProfile,
-        timeRange: TimeRangeOption,
+        rangeLabel: String,
         samples: [SystemSample],
         topApps: [AggregatedAppUsage],
         evaluation: SufficiencyEvaluation
     ) -> Data? {
         let payload = RawExportPayload(
             exportedAt: Date(),
-            timeRange: timeRange.title,
+            timeRange: rangeLabel,
             hardware: hardware,
             evaluation: evaluation,
             systemSamples: samples,
