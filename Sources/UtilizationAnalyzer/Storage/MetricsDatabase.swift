@@ -381,6 +381,62 @@ public final class MetricsDatabase: @unchecked Sendable {
         }
     }
 
+    // MARK: - Query Per-Sample App Breakdown (for Spike Attribution & Per-Row CSV/JSON)
+
+    public func fetchAppsBySampleId(since startDate: Date, until endDate: Date = .distantFuture) -> [Int64: [AppUsageSnapshot]] {
+        queue.sync {
+            guard let db else { return [:] }
+            let sql = """
+            SELECT
+                sample_id,
+                app_id,
+                display_name,
+                bundle_path,
+                process_count,
+                cpu_percent,
+                memory_bytes,
+                disk_read_bps,
+                disk_write_bps
+            FROM app_samples
+            WHERE timestamp >= ? AND timestamp <= ?
+            ORDER BY sample_id ASC, cpu_percent DESC;
+            """
+
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
+            defer { sqlite3_finalize(stmt) }
+
+            sqlite3_bind_double(stmt, 1, startDate.timeIntervalSince1970)
+            sqlite3_bind_double(stmt, 2, endDate.timeIntervalSince1970)
+
+            var map: [Int64: [AppUsageSnapshot]] = [:]
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let sampleId = sqlite3_column_int64(stmt, 0)
+                let appId = columnString(stmt, 1) ?? "Unknown"
+                let displayName = columnString(stmt, 2) ?? appId
+                let bundlePath = columnString(stmt, 3)
+                let procCount = Int(sqlite3_column_int(stmt, 4))
+                let cpuPct = sqlite3_column_double(stmt, 5)
+                let memBytes = UInt64(bitPattern: sqlite3_column_int64(stmt, 6))
+                let readBps = sqlite3_column_double(stmt, 7)
+                let writeBps = sqlite3_column_double(stmt, 8)
+
+                let snap = AppUsageSnapshot(
+                    appIdentifier: appId,
+                    displayName: displayName,
+                    bundlePath: bundlePath,
+                    processCount: procCount,
+                    cpuPercent: cpuPct,
+                    memoryBytes: memBytes,
+                    diskReadBytesPerSec: readBps,
+                    diskWriteBytesPerSec: writeBps
+                )
+                map[sampleId, default: []].append(snap)
+            }
+            return map
+        }
+    }
+
     // MARK: - Maintenance & Stats
 
     /// Deletes samples older than `days`. A value of 0 or less means "keep forever" (no pruning).

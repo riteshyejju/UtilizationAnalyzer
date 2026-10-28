@@ -248,21 +248,22 @@ public final class MonitoringManager: ObservableObject {
             collectorQueue.async {
                 let samples = db.fetchSystemSamples(since: interval.start, until: interval.end, maxPoints: 0)
                 let apps = db.fetchAggregatedApps(since: interval.start, until: interval.end, limit: 40)
+                let appsBySampleId = db.fetchAppsBySampleId(since: interval.start, until: interval.end)
                 let eval = SufficiencyAnalyzer.evaluate(hardware: hw, samples: samples, topApps: apps)
                 var data: Data?
                 switch kind {
                 case .markdown:
                     data = DataExporter.generateLLMMarkdownReport(
                         hardware: hw, rangeLabel: interval.label, samples: samples,
-                        topApps: apps, evaluation: eval, userNotes: notes
+                        topApps: apps, evaluation: eval, appsBySampleId: appsBySampleId, userNotes: notes
                     ).data(using: .utf8)
                 case .json:
                     data = DataExporter.generateRawJSON(
                         hardware: hw, rangeLabel: interval.label, samples: samples,
-                        topApps: apps, evaluation: eval
+                        topApps: apps, evaluation: eval, appsBySampleId: appsBySampleId
                     )
                 case .csv:
-                    data = DataExporter.generateRawCSV(samples: samples).data(using: .utf8)
+                    data = DataExporter.generateRawCSV(samples: samples, appsBySampleId: appsBySampleId).data(using: .utf8)
                 }
                 continuation.resume(returning: data.map { ($0, samples.count) })
             }

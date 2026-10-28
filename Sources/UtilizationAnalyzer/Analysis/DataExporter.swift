@@ -1,6 +1,11 @@
 import Foundation
 import AppKit
 
+public struct SampleWithApps: Codable, Sendable {
+    public let sample: SystemSample
+    public let topApps: [AppUsageSnapshot]
+}
+
 public struct RawExportPayload: Codable, Sendable {
     public let exportedAt: Date
     public let timeRange: String
@@ -8,6 +13,7 @@ public struct RawExportPayload: Codable, Sendable {
     public let evaluation: SufficiencyEvaluation
     public let systemSamples: [SystemSample]
     public let aggregatedApps: [AggregatedAppUsage]
+    public let samplesWithApps: [SampleWithApps]
 }
 
 public enum DataExporter {
@@ -20,6 +26,7 @@ public enum DataExporter {
         samples: [SystemSample],
         topApps: [AggregatedAppUsage],
         evaluation: SufficiencyEvaluation,
+        appsBySampleId: [Int64: [AppUsageSnapshot]] = [:],
         userNotes: String = ""
     ) -> String {
         let df = ISO8601DateFormatter()
@@ -66,8 +73,8 @@ public enum DataExporter {
         md.append("# MacBook Hardware Sufficiency & Utilization Report")
         md.append("")
         md.append("> **Instructions for the AI / LLM Assistant:**")
-        md.append("> I am evaluating whether my current Mac (`\(hardware.chipName)`, `\(Int(round(hardware.physicalMemoryGB))) GB Unified Memory`, model `\(hardware.modelIdentifier)`) is sufficient for my real-world workload, or if I should upgrade to a higher Unified Memory tier (e.g., 24 GB / 32 GB) or an actively cooled MacBook Pro.")
-        md.append("> Please analyze the telemetry below—paying close attention to **Unified Memory pressure**, **Swap & Compressed RAM**, **Fanless Thermal States**, **CPU/GPU p95 bursts**, and **per-application resource consumption**—and give me a clear, data-backed recommendation.")
+        md.append("> I am evaluating whether my current Mac (`\(hardware.chipName)`, `\(Int(round(hardware.physicalMemoryGB))) GB Unified Memory`, model `\(hardware.modelIdentifier)`) is sufficient for my real-world workload, or if I should upgrade to a higher Unified Memory tier or an actively cooled system.")
+        md.append("> Please analyze the telemetry below—paying close attention to **Unified Memory pressure**, **Swap & Compressed RAM**, **Thermal States**, **CPU/GPU p95 bursts**, **per-application resource consumption**, and **exact app attribution during peak spikes**—and give me a clear, data-backed recommendation.")
         md.append("")
 
         if !userNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -124,7 +131,7 @@ public enum DataExporter {
         let nominalThermPct = max(0.0, 100.0 - evaluation.thermalElevatedPercentTime)
         md.append(String(format: "- **Memory Pressure Breakdown:** `%.1f%%` Nominal (Green) | `%.1f%%` Elevated (Yellow) | `%.1f%%` Critical (Red)",
                          nominalMemPct, evaluation.memoryYellowPercentTime, evaluation.memoryRedPercentTime))
-        md.append(String(format: "- **Thermal State Breakdown (Fanless Chassis Check):** `%.1f%%` Nominal (Cool) | `%.1f%%` Elevated (Fair/Warm) | `%.1f%%` Throttling (Serious/Critical)",
+        md.append(String(format: "- **Thermal State Breakdown:** `%.1f%%` Nominal (Cool) | `%.1f%%` Elevated (Fair/Warm) | `%.1f%%` Throttling (Serious/Critical)",
                          nominalThermPct, evaluation.thermalElevatedPercentTime, evaluation.thermalSeriousOrCriticalPercentTime))
         for f in evaluation.findings {
             md.append("- **[\(f.severity) — \(f.category)] \(f.title):** \(f.detail)")
@@ -152,30 +159,80 @@ public enum DataExporter {
         }
         md.append("")
 
-        md.append("## 6. Questions for Your Analysis")
-        md.append("1. **Unified Memory Sizing:** Based on my compressed RAM, swap usage, and memory pressure percentages, is `\(Int(round(hardware.physicalMemoryGB))) GB` enough for the next 3–4 years, or should I exchange for a higher RAM configuration?")
-        md.append("2. **MacBook Air (Fanless) vs. MacBook Pro (Active Cooling):** Based on my CPU p95/peak load, thermal state distribution, and wattage, am I losing meaningful performance to passive thermal throttling?")
-        md.append("3. **Application Bottlenecks:** Which specific apps in Section 5 are driving the highest memory or CPU pressure, and what concrete steps can I take to optimize them?")
+        // Section 6: Spike & Burst Attribution
+        if !samples.isEmpty {
+            md.append("## 6. Peak & Spike Attribution (Exact Apps Behind Top Bursts)")
+            md.append("| Event | Timestamp | System State | Top Apps at Exact Timestamp |")
+            md.append("| :--- | :---: | :--- | :--- |")
+
+            // Top 3 distinct CPU spikes
+            let topCpuSamples = samples.sorted { $0.cpuTotalPercent > $1.cpuTotalPercent }.prefix(3)
+            for (idx, s) in topCpuSamples.enumerated() {
+                let apps = appsBySampleId[s.id] ?? []
+                let topCpuApps = apps.sorted { $0.cpuPercent > $1.cpuPercent }.prefix(3)
+                    .map { String(format: "%@ (%.1f%% CPU, %@)", $0.displayName, $0.cpuPercent, ByteFormatter.formatBytes($0.memoryBytes)) }
+                    .joined(separator: "; ")
+                let sysDesc = String(format: "CPU %.1f%% (Peak Core %.0f%%), RAM %@, %@",
+                                     s.cpuTotalPercent, s.peakCorePercent,
+                                     ByteFormatter.formatBytes(s.memoryUsedBytes), s.thermalState.shortLabel)
+                md.append("| **CPU Burst #\(idx + 1)** | `\(df.string(from: s.timestamp))` | \(sysDesc) | \(topCpuApps.isEmpty ? "N/A" : topCpuApps) |")
+            }
+
+            // Peak Memory sample
+            if let peakMemSample = samples.max(by: { $0.memoryUsedBytes < $1.memoryUsedBytes }) {
+                let apps = appsBySampleId[peakMemSample.id] ?? []
+                let topMemApps = apps.sorted { $0.memoryBytes > $1.memoryBytes }.prefix(3)
+                    .map { String(format: "%@ (%@ RAM, %.1f%% CPU)", $0.displayName, ByteFormatter.formatBytes($0.memoryBytes), $0.cpuPercent) }
+                    .joined(separator: "; ")
+                let sysDesc = "RAM \(ByteFormatter.formatBytes(peakMemSample.memoryUsedBytes)) (Comp \(ByteFormatter.formatBytes(peakMemSample.memoryCompressedBytes)), Swap \(ByteFormatter.formatBytes(peakMemSample.swapUsedBytes)), \(peakMemSample.memoryPressure.shortLabel))"
+                md.append("| **Peak Memory** | `\(df.string(from: peakMemSample.timestamp))` | \(sysDesc) | \(topMemApps.isEmpty ? "N/A" : topMemApps) |")
+            }
+
+            // Peak Disk I/O sample
+            if let peakDiskSample = samples.max(by: {
+                ($0.diskReadBytesPerSec + $0.diskWriteBytesPerSec) < ($1.diskReadBytesPerSec + $1.diskWriteBytesPerSec)
+            }), (peakDiskSample.diskReadBytesPerSec + peakDiskSample.diskWriteBytesPerSec) > 0 {
+                let apps = appsBySampleId[peakDiskSample.id] ?? []
+                let topDiskApps = apps.sorted {
+                    ($0.diskReadBytesPerSec + $0.diskWriteBytesPerSec) > ($1.diskReadBytesPerSec + $1.diskWriteBytesPerSec)
+                }.prefix(3)
+                    .map { "\($0.displayName) (R: \(ByteFormatter.formatRate($0.diskReadBytesPerSec)), W: \(ByteFormatter.formatRate($0.diskWriteBytesPerSec)))" }
+                    .joined(separator: "; ")
+                let sysDesc = "Read \(ByteFormatter.formatRate(peakDiskSample.diskReadBytesPerSec)) / Write \(ByteFormatter.formatRate(peakDiskSample.diskWriteBytesPerSec))"
+                md.append("| **Peak Disk I/O** | `\(df.string(from: peakDiskSample.timestamp))` | \(sysDesc) | \(topDiskApps.isEmpty ? "N/A" : topDiskApps) |")
+            }
+            md.append("")
+        }
+
+        md.append("## 7. Questions for Your Analysis")
+        md.append("1. **Unified Memory Sizing:** Based on my compressed RAM, swap usage, and memory pressure percentages, is `\(Int(round(hardware.physicalMemoryGB))) GB` enough for the next 3–4 years, or should I upgrade to a higher RAM configuration?")
+        md.append("2. **Thermal & Sustained Load Headroom:** Based on my CPU p95/peak load, thermal state distribution, and wattage, am I losing meaningful performance to thermal throttling?")
+        md.append("3. **Application Bottlenecks:** Which specific apps in Sections 5 and 6 are driving the highest memory or CPU pressure during spikes, and what concrete steps can I take to optimize them?")
 
         return md.joined(separator: "\n")
     }
 
-    // MARK: - Option 2: Raw Data Export (JSON & CSV)
+    // MARK: - Option 2: Raw Data Export (JSON & CSV with Per-Sample Process Attribution)
 
     public static func generateRawJSON(
         hardware: HardwareProfile,
         rangeLabel: String,
         samples: [SystemSample],
         topApps: [AggregatedAppUsage],
-        evaluation: SufficiencyEvaluation
+        evaluation: SufficiencyEvaluation,
+        appsBySampleId: [Int64: [AppUsageSnapshot]] = [:]
     ) -> Data? {
+        let samplesWithApps = samples.map { s in
+            SampleWithApps(sample: s, topApps: appsBySampleId[s.id] ?? [])
+        }
         let payload = RawExportPayload(
             exportedAt: Date(),
             timeRange: rangeLabel,
             hardware: hardware,
             evaluation: evaluation,
             systemSamples: samples,
-            aggregatedApps: topApps
+            aggregatedApps: topApps,
+            samplesWithApps: samplesWithApps
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -183,7 +240,10 @@ public enum DataExporter {
         return try? encoder.encode(payload)
     }
 
-    public static func generateRawCSV(samples: [SystemSample]) -> String {
+    public static func generateRawCSV(
+        samples: [SystemSample],
+        appsBySampleId: [Int64: [AppUsageSnapshot]] = [:]
+    ) -> String {
         let df = ISO8601DateFormatter()
         var lines: [String] = []
         lines.append([
@@ -217,11 +277,77 @@ public enum DataExporter {
             "battery_pct",
             "is_charging",
             "is_on_ac_power",
-            "power_watts"
+            "power_watts",
+            "top_cpu_app_1",
+            "top_cpu_app_1_pct",
+            "top_cpu_app_1_mem_mb",
+            "top_cpu_app_2",
+            "top_cpu_app_2_pct",
+            "top_cpu_app_2_mem_mb",
+            "top_cpu_app_3",
+            "top_cpu_app_3_pct",
+            "top_cpu_app_3_mem_mb",
+            "top_mem_app_1",
+            "top_mem_app_1_mb",
+            "top_mem_app_2",
+            "top_mem_app_2_mb",
+            "top_mem_app_3",
+            "top_mem_app_3_mb",
+            "top_disk_app_1",
+            "top_disk_app_1_rw_bps",
+            "top_apps_breakdown"
         ].joined(separator: ","))
 
         for s in samples {
-            let row: [String] = [
+            let apps = appsBySampleId[s.id] ?? []
+            let byCpu = apps.sorted { $0.cpuPercent > $1.cpuPercent }
+            let byMem = apps.sorted { $0.memoryBytes > $1.memoryBytes }
+            let byDisk = apps.sorted {
+                ($0.diskReadBytesPerSec + $0.diskWriteBytesPerSec) > ($1.diskReadBytesPerSec + $1.diskWriteBytesPerSec)
+            }
+
+            func cpuSlot(_ idx: Int) -> [String] {
+                guard idx < byCpu.count else { return ["", "0.00", "0.0"] }
+                let a = byCpu[idx]
+                return [
+                    escapeCSV(a.displayName),
+                    String(format: "%.2f", a.cpuPercent),
+                    String(format: "%.1f", Double(a.memoryBytes) / 1_048_576.0)
+                ]
+            }
+
+            func memSlot(_ idx: Int) -> [String] {
+                guard idx < byMem.count else { return ["", "0.0"] }
+                let a = byMem[idx]
+                return [
+                    escapeCSV(a.displayName),
+                    String(format: "%.1f", Double(a.memoryBytes) / 1_048_576.0)
+                ]
+            }
+
+            let diskSlot: [String]
+            if let d = byDisk.first, (d.diskReadBytesPerSec + d.diskWriteBytesPerSec) > 0 {
+                diskSlot = [
+                    escapeCSV(d.displayName),
+                    String(format: "%.1f", d.diskReadBytesPerSec + d.diskWriteBytesPerSec)
+                ]
+            } else {
+                diskSlot = ["", "0.0"]
+            }
+
+            // Compact top-5 apps breakdown for this exact timestamp
+            let breakdown = apps.prefix(5).map { a in
+                String(
+                    format: "%@(cpu=%.1f%%,ram=%.0fMB,rw=%.0fKB/s,procs=%d)",
+                    a.displayName.replacingOccurrences(of: "\"", with: "'"),
+                    a.cpuPercent,
+                    Double(a.memoryBytes) / 1_048_576.0,
+                    (a.diskReadBytesPerSec + a.diskWriteBytesPerSec) / 1024.0,
+                    a.processCount
+                )
+            }.joined(separator: "; ")
+
+            var row: [String] = [
                 df.string(from: s.timestamp),
                 String(format: "%.2f", s.cpuUserPercent),
                 String(format: "%.2f", s.cpuSystemPercent),
@@ -254,10 +380,27 @@ public enum DataExporter {
                 s.isOnACPower ? "true" : "false",
                 String(format: "%.2f", s.powerWatts)
             ]
+            row.append(contentsOf: cpuSlot(0))
+            row.append(contentsOf: cpuSlot(1))
+            row.append(contentsOf: cpuSlot(2))
+            row.append(contentsOf: memSlot(0))
+            row.append(contentsOf: memSlot(1))
+            row.append(contentsOf: memSlot(2))
+            row.append(contentsOf: diskSlot)
+            row.append(escapeCSV(breakdown))
+
             lines.append(row.joined(separator: ","))
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    private static func escapeCSV(_ value: String) -> String {
+        if value.contains(",") || value.contains("\"") || value.contains(";") || value.contains(" ") {
+            let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+            return "\"\(escaped)\""
+        }
+        return value
     }
 
     // MARK: - Clipboard & Save Panel Helpers

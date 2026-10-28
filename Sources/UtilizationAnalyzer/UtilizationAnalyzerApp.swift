@@ -137,13 +137,15 @@ public enum SelfTestRunner {
             return false
         }
 
-        // 5. Exporters (Option 1: LLM Markdown | Option 2: Raw JSON & CSV)
+        // 5. Exporters (Option 1: LLM Markdown | Option 2: Raw JSON & CSV with Per-Sample App Attribution)
+        let appsBySample = db.fetchAppsBySampleId(since: Date().addingTimeInterval(-60))
         let markdown = DataExporter.generateLLMMarkdownReport(
             hardware: hw,
             rangeLabel: "Last 1 Hour",
             samples: fetchedSamples,
             topApps: fetchedApps,
             evaluation: evaluation,
+            appsBySampleId: appsBySample,
             userNotes: "Self-test validation run."
         )
         let jsonData = DataExporter.generateRawJSON(
@@ -151,11 +153,15 @@ public enum SelfTestRunner {
             rangeLabel: "Last 1 Hour",
             samples: fetchedSamples,
             topApps: fetchedApps,
-            evaluation: evaluation
+            evaluation: evaluation,
+            appsBySampleId: appsBySample
         )
-        let csvString = DataExporter.generateRawCSV(samples: fetchedSamples)
+        let csvString = DataExporter.generateRawCSV(samples: fetchedSamples, appsBySampleId: appsBySample)
 
         guard markdown.contains("# MacBook Hardware Sufficiency & Utilization Report"),
+              markdown.contains("## 6. Peak & Spike Attribution"),
+              csvString.contains("top_cpu_app_1"),
+              csvString.contains("top_apps_breakdown"),
               let jsonData, jsonData.count > 100,
               csvString.components(separatedBy: "\n").count >= 3 else {
             print("FAIL: Export validation failed")
@@ -222,13 +228,16 @@ public enum SelfTestRunner {
             samples = db.fetchSystemSamples(since: Date().addingTimeInterval(-86400), maxPoints: 0)
             apps = db.fetchAggregatedApps(since: Date().addingTimeInterval(-86400), limit: 25)
         }
+        let since = Date().addingTimeInterval(-86400)
+        let appsBySample = db.fetchAppsBySampleId(since: since)
         let eval = SufficiencyAnalyzer.evaluate(hardware: hw, samples: samples, topApps: apps)
         let report = DataExporter.generateLLMMarkdownReport(
             hardware: hw,
             rangeLabel: "Last 24 Hours",
             samples: samples,
             topApps: apps,
-            evaluation: eval
+            evaluation: eval,
+            appsBySampleId: appsBySample
         )
         print(report)
     }
