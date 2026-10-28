@@ -13,9 +13,9 @@ public struct MenuBarPopoverView: View {
         VStack(alignment: .leading, spacing: 12) {
             // Header
             HStack(spacing: 10) {
-                Image(systemName: "gauge.with.dots.needle.67percent")
-                    .font(.title2)
-                    .foregroundStyle(.blue)
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .frame(width: 30, height: 30)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("UtilizationAnalyzer")

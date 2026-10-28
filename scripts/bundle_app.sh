@@ -27,6 +27,21 @@ mkdir -p "${APP_BUNDLE}/Contents/Resources"
 cp "${BIN_PATH}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 
+# App icon: generate AppIcon.icns from Resources/AppIcon.png (1024x1024)
+ICON_SRC="Resources/AppIcon.png"
+if [[ -f "${ICON_SRC}" ]]; then
+    echo "==> Generating AppIcon.icns..."
+    ICONSET="${OUT_DIR}/AppIcon.iconset"
+    rm -rf "${ICONSET}" && mkdir -p "${ICONSET}"
+    for size in 16 32 128 256 512; do
+        sips -z ${size} ${size} "${ICON_SRC}" --out "${ICONSET}/icon_${size}x${size}.png" >/dev/null
+        double=$((size * 2))
+        sips -z ${double} ${double} "${ICON_SRC}" --out "${ICONSET}/icon_${size}x${size}@2x.png" >/dev/null
+    done
+    iconutil -c icns "${ICONSET}" -o "${APP_BUNDLE}/Contents/Resources/AppIcon.icns"
+    rm -rf "${ICONSET}"
+fi
+
 cat > "${APP_BUNDLE}/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -38,6 +53,8 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<EOF
     <string>${APP_NAME}</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

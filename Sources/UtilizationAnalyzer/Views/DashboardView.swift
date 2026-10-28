@@ -132,12 +132,9 @@ private struct OverviewTabView: View {
             VStack(alignment: .leading, spacing: 18) {
                 // Hardware Profile Banner
                 HStack(spacing: 14) {
-                    Image(systemName: "laptopcomputer")
-                        .font(.system(size: 28))
-                        .foregroundStyle(.blue)
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
                         .frame(width: 48, height: 48)
-                        .background(Color.blue.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text(manager.hardware.formattedSummary)

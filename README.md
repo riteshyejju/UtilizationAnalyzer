@@ -1,4 +1,8 @@
-# UtilizationAnalyzer
+<p align="center">
+  <img src="Resources/AppIcon.png" width="160" alt="UtilizationAnalyzer logo">
+</p>
+
+<h1 align="center">UtilizationAnalyzer</h1>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-brightgreen.svg)](https://www.apple.com/macos/)
