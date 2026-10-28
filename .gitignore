@@ -1,0 +1,24 @@
+# Xcode / SwiftPM
+.DS_Store
+.build/
+.swiftpm/
+build/
+DerivedData/
+*.xcodeproj/project.xcworkspace/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Built App Bundles & Archives
+dist/
+*.app/
+*.dmg
+*.zip
+
+# Local exports / scratch
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db

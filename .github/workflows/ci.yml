@@ -1,0 +1,34 @@
+name: Build & Verify macOS App
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check Swift Version
+        run: swift --version
+
+      - name: Build Debug & Run Self-Test Suite
+        run: |
+          swift build
+          .build/debug/UtilizationAnalyzer --self-test
+
+      - name: Package Release .app Bundle
+        run: |
+          chmod +x scripts/bundle_app.sh
+          ./scripts/bundle_app.sh
+          cd dist && zip -r UtilizationAnalyzer-macOS.zip UtilizationAnalyzer.app
+
+      - name: Upload macOS App Bundle Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UtilizationAnalyzer-macOS
+          path: dist/UtilizationAnalyzer-macOS.zip
