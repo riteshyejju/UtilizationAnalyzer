@@ -62,8 +62,13 @@ EOF
 
 echo -n "APPL????" > "${APP_BUNDLE}/Contents/PkgInfo"
 
-echo "==> Ad-hoc signing ${APP_BUNDLE}..."
-codesign --force --deep --sign - "${APP_BUNDLE}"
+SIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+echo "==> Signing ${APP_BUNDLE} (identity: ${SIGN_IDENTITY})..."
+if [[ "${SIGN_IDENTITY}" == "-" ]]; then
+    codesign --force --deep --sign - "${APP_BUNDLE}"
+else
+    codesign --force --deep --options runtime --timestamp --sign "${SIGN_IDENTITY}" "${APP_BUNDLE}"
+fi
 
 echo "==> Creating ${DMG_PATH}..."
 rm -rf "${DMG_STAGING}"
@@ -73,5 +78,11 @@ ln -s /Applications "${DMG_STAGING}/Applications"
 rm -f "${DMG_PATH}"
 hdiutil create -volname "${APP_NAME}" -srcfolder "${DMG_STAGING}" -ov -format UDZO "${DMG_PATH}" >/dev/null
 rm -rf "${DMG_STAGING}"
+
+if [[ "${SIGN_IDENTITY}" != "-" && -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]]; then
+    echo "==> Submitting ${DMG_PATH} for Apple Notarization..."
+    xcrun notarytool submit "${DMG_PATH}" --keychain-profile "${NOTARY_KEYCHAIN_PROFILE}" --wait
+    xcrun stapler staple "${DMG_PATH}"
+fi
 
 echo "==> Built ${APP_BUNDLE} and ${DMG_PATH} successfully!"

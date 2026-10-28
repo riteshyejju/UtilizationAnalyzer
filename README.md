@@ -10,12 +10,14 @@ A lightweight, native macOS Menu Bar + Dashboard app (Swift & SwiftUI) that runs
 
 ## Download & Install
 
-- **Direct Download (`.dmg`):** [**Download UtilizationAnalyzer.dmg**](https://github.com/riteshyejju/UtilizationAnalyzer/releases/latest/download/UtilizationAnalyzer.dmg) *(also available in [`releases/UtilizationAnalyzer.dmg`](releases/UtilizationAnalyzer.dmg))*
+### Option A: Direct `.dmg` Download
+- [**Download UtilizationAnalyzer.dmg**](https://github.com/riteshyejju/UtilizationAnalyzer/releases/latest/download/UtilizationAnalyzer.dmg) *(also in [`releases/UtilizationAnalyzer.dmg`](releases/UtilizationAnalyzer.dmg))*
 - Open `UtilizationAnalyzer.dmg` and drag **UtilizationAnalyzer.app** to `/Applications`.
-- *Note (First Launch):* Since the app is ad-hoc signed, if macOS Gatekeeper prompts you, right-click `UtilizationAnalyzer.app` → **Open**, or run:
-  ```bash
-  xattr -cr /Applications/UtilizationAnalyzer.app
-  ```
+
+### Option B: One-Step Install (Auto-Downloads & Opens)
+```bash
+curl -fsSL https://raw.githubusercontent.com/riteshyejju/UtilizationAnalyzer/main/install.sh | bash
+```
 
 ---
 
